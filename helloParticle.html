@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>particle</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				font-family: Monospace;
+				background-color: #000;
+				color: #000;
+				margin: 0px;
+				overflow: hidden;
+			}
+			#info {
+				position: absolute;
+				padding: 10px;
+				width: 100%;
+				text-align: center;
+			}
+			a {
+				text-decoration: underline;
+				cursor: pointer;
+			}
+		</style>
+	</head>
+
+	<body>
+		<div id="info">My particle Simulation<br/>
+		</div>
+
+		<script src="three.js"></script>
+		<script src="Detector.js"></script>
+		<script src="OrbitControls.js"></script>
+		<script src="stats.min.js"></script>
+
+		<script>
+			var container, stats;
+			var camera, scene, renderer;
+			var MAX_WIND_STR = 10;
+			var FIRE_PARTICLE_NUM = 1500;
+			var FLAME_PARTICLE_NUM = 2000;
+			var FIRE_PARTICLE_AGE_LIMIT = 30;
+			var FLAME_PARTICLE_AGE_LIMIT = 60;
+			var FIRE_PARTICLE_AGE_AMPLIFIER = 1.2;
+			var FLAME_PARTICLE_AGE_AMPLIFIER = 0.5;
+			
+			var PARTICLE_SIZE = 1;
+			
+			var fire_particles = [];
+			var flame_particles = [];
+			var fire_pos=[90,-190,110];
+			var windForce = new Object();
+
+			init();
+			animate();
+			function init() {
+				container = document.createElement( 'div' );
+				document.body.appendChild( container );
+				// scene
+				scene = new THREE.Scene();
+				scene.background = new THREE.Color( 0x33ccff );
+				// scene.fog = new THREE.Fog( 0xcce0ff, 500, 10000 );
+				// camera
+				camera = new THREE.PerspectiveCamera( 30, window.innerWidth / window.innerHeight, 1, 10000 );
+				camera.position.set( 1000, 50, 1500 );
+				// lights
+				var light, materials;
+				scene.add( new THREE.AmbientLight( 0x666666 ) );
+				light = new THREE.DirectionalLight( 0xdfebff, 1 );
+				light.position.set( 50, 200, 100 );
+				light.position.multiplyScalar( 1.3 );
+				light.castShadow = true;
+				light.shadow.mapSize.width = 1024;
+				light.shadow.mapSize.height = 1024;
+				var d = 300;
+				light.shadow.camera.left = - d;
+				light.shadow.camera.right = d;
+				light.shadow.camera.top = d;
+				light.shadow.camera.bottom = - d;
+				light.shadow.camera.far = 1000;
+				scene.add( light );
+				
+				//ground
+				var groundMaterial = new THREE.MeshLambertMaterial( {color: 0x006600, side: 2, shading: THREE.FlatShading} );
+				var ground = new THREE.Mesh( new THREE.PlaneBufferGeometry( 20000, 20000 ) ,groundMaterial );
+				ground.position.y = - 250;
+				ground.rotation.x = - Math.PI / 2;
+				ground.receiveShadow = true;
+				scene.add( ground );
+				
+				// cylinder bases
+				var cydGeo = new THREE.CylinderBufferGeometry(10,20,120,32);
+				var cydMaterial = new THREE.MeshStandardMaterial({color: 0x663300});
+				var cylinder1 = new THREE.Mesh( cydGeo, cydMaterial );
+				cylinder1.position.set(100,-220,60);
+				cylinder1.castShadow = true;
+				cylinder1.receiveShadow = true;
+				cylinder1.rotateX(deg(65));
+
+				var cylinder2 = new THREE.Mesh( cydGeo, cydMaterial );
+				cylinder2.position.set(140,-220,140);
+				cylinder2.castShadow = true;
+				cylinder2.receiveShadow = true;
+				cylinder2.rotateX(deg(90));
+				cylinder2.rotateZ(deg(120));
+				cylinder2.rotateX(deg(-25));
+
+				var cylinder3 = new THREE.Mesh( cydGeo, cydMaterial );
+				cylinder3.position.set(40,-220,130);
+				cylinder3.castShadow = true;
+				cylinder3.receiveShadow = true;
+				cylinder3.rotateX(deg(90));
+				cylinder3.rotateZ(deg(240));
+				cylinder3.rotateX(deg(-25));
+
+				scene.add(cylinder1);
+				scene.add(cylinder2);
+				scene.add(cylinder3);
+				
+				// particles
+				var ptcGeo = new THREE.DodecahedronGeometry( PARTICLE_SIZE, 0 );
+				createParticles(ptcGeo);		
+
+				// wind force
+				windForce.str = 5;
+				windForce.dir = 1;
+			
+				// renderer
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				container.appendChild( renderer.domElement );
+				renderer.gammaInput = true;
+				renderer.gammaOutput = true;
+				renderer.shadowMap.enabled = true;
+				// controls
+				var controls = new THREE.OrbitControls( camera, renderer.domElement );
+				controls.maxPolarAngle = Math.PI * 0.5;
+				controls.minDistance = 1000;
+				controls.maxDistance = 5000;
+				// performance monitor
+				stats = new Stats();
+				container.appendChild( stats.dom );
+				//
+				window.addEventListener( 'resize', onWindowResize, false );
+			}
+			
+			
+			//
+			function onWindowResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}
+			//
+			function animate() {
+				requestAnimationFrame( animate );
+				animateParticles();
+				render();
+				stats.update();
+			}
+			
+			function render() {
+				renderer.render( scene, camera );
+			}
+
+			function random(num_range){
+				return Math.floor(Math.random() * (num_range*2)) - num_range;
+			}
+			
+			function windForceAge(age,limit){
+				return (windForce.str-MAX_WIND_STR)*(age/limit/2);
+			}
+			
+			function animateParticles(){
+				calculateWindForce();
+				for(var i = 0; i < FIRE_PARTICLE_NUM; i++){
+					updateParticles(fire_particles, i, random(5), random(5), 1.5, Math.floor(Math.random() * 5), FIRE_PARTICLE_AGE_LIMIT);					
+					if(fire_particles[i].age > FIRE_PARTICLE_AGE_LIMIT + random(25)){
+						resetParticles(fire_particles, i, random(10),random(15),random(10),FIRE_PARTICLE_AGE_AMPLIFIER);
+					} else 
+					fire_particles[i].age +=1;
+				}
+				
+				for(var i = 0; i < FLAME_PARTICLE_NUM; i++){
+					updateParticles(flame_particles, i, random(4), random(4), 20, Math.floor(Math.random() * 5), FLAME_PARTICLE_AGE_LIMIT);					
+					if(flame_particles[i].age > FLAME_PARTICLE_AGE_LIMIT + random(25)){
+						resetParticles(flame_particles, i, random(20),random(5),random(20),FLAME_PARTICLE_AGE_AMPLIFIER);
+					} 
+					flame_particles[i].age +=1;
+				}			
+			}
+			
+			function updateParticles(particles, i, rand_x, rand_z, amp, acc_rand_y, wind_limit){
+					var ptc_x = particles[i].position.x + (rand_x/amp) + windForceAge(particles[i].age,wind_limit);
+					var ptc_y = particles[i].position.y +  acc_rand_y;
+					var ptc_z = particles[i].position.z + (rand_z/amp);
+					particles[i].position.set(ptc_x,ptc_y,ptc_z);
+			}
+			
+			function calculateWindForce(){
+				if(windForce.str <= (MAX_WIND_STR*2) && windForce.str > 0){
+					windForce.str -= (0.1*windForce.dir);
+				} else {
+					windForce.dir *= -1;
+					windForce.str -= (0.1*windForce.dir);
+				}				
+			}
+			
+			function createParticles(ptcGeo){
+				for(var i = 0; i < FIRE_PARTICLE_NUM; i++){
+					var firePtcMaterial = new THREE.MeshLambertMaterial({color: 0xffff00});
+					var firePtc =  new THREE.Mesh( ptcGeo, firePtcMaterial );
+					fire_particles.push(firePtc);
+					resetParticles(fire_particles, i, random(10),random(15),random(10),FIRE_PARTICLE_AGE_AMPLIFIER);
+					scene.add(fire_particles[i]);
+				}
+				
+				for(var i = 0; i < FLAME_PARTICLE_NUM; i++){
+					var flamePtcMaterial = new THREE.MeshLambertMaterial({color: 0xff0000, transparent: true, opacity: 0.45});
+					var flamePtc =  new THREE.Mesh( ptcGeo, flamePtcMaterial );
+					flame_particles.push(flamePtc);
+					resetParticles(flame_particles, i, random(20),random(5),random(20),FLAME_PARTICLE_AGE_AMPLIFIER);
+					scene.add(flame_particles[i]);
+				}		
+			}	
+			
+			function resetParticles(particles, i, rand_x, rand_y, rand_z, age_amp){
+					particles[i].position.set(fire_pos[0] + rand_x, fire_pos[1] + rand_y, fire_pos[2] +rand_z);
+					particles[i].age = dist2yo(rand_x,rand_z) * age_amp;				
+			}
+
+			function deg(degree){
+			   return (degree * Math.PI)/180;
+			}
+			
+			function dist2yo(x, y){
+				return Math.sqrt(x*x + y*y);
+			}
+		</script>
+	</body>
+</html>
